@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pytellybox"
+version = "0.1.0"
+description = "Async client for the Tellybox admin and kid APIs (used by the Home Assistant integration)"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Sander van Vliet" }]
+requires-python = ">=3.13"
+dependencies = ["aiohttp>=3.10"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Programming Language :: Python :: 3",
+    "Topic :: Home Automation",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/sandermvanvliet/pytellybox"
+Tellybox = "https://github.com/sandermvanvliet/Tellybox"
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.24", "aioresponses>=0.7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pytellybox"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
