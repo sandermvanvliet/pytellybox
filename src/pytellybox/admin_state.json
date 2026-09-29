@@ -1,0 +1,21 @@
+{
+  "instance_id": "3f2a9c0e5b7d4e1f8a6b2c3d4e5f6a7b",
+  "version": "2026.09.29.5",
+  "api": 1,
+  "day": {"date": "2026-09-29", "resets_at": "2026-09-30T02:00:00+00:00"},
+  "tv": {"connection": "CONNECTED", "reachable": true, "device": "TV"},
+  "now_playing": {"episode_id": 4, "show_id": 2, "title": "Alongside", "show": "Harbour Pups",
+                  "state": "playing", "position_s": 312, "duration_s": 660, "profile_ids": [1]},
+  "group": {"remaining_s": 1790, "time_up": false, "last_five": false, "action": "continue", "reason": null,
+            "grace_ends_at": null, "session_started_at": "2026-09-29T13:10:00+00:00", "session_elapsed_s": 1200},
+  "profiles": [
+    {"id": 1, "name": "Mila", "avatar": "fox", "allowance_s": 3600, "extra_s": 900, "used_s": 2710,
+     "remaining_s": 1790, "unlimited": false, "blocked": false, "mode": "ignore_pauses", "max_session_s": 5400,
+     "session_elapsed_s": 1200, "can_start": true, "reason": null, "watching": true, "last_five": false},
+    {"id": 2, "name": "Noah", "avatar": null, "allowance_s": 2700, "extra_s": 0, "used_s": 2700,
+     "remaining_s": 0, "unlimited": false, "blocked": false, "mode": "ignore_pauses", "max_session_s": null,
+     "session_elapsed_s": null, "can_start": false, "reason": "allowance", "watching": false, "last_five": true}
+  ],
+  "jobs": {"queued": 1, "running": 1, "failed": 0, "held_ready": 3},
+  "disk": {"media_bytes": 48213000000, "free_bytes": 120000000000}
+}
