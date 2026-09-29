@@ -19,7 +19,7 @@ async with aiohttp.ClientSession() as session:
         print(state.group.remaining_s)
 ```
 
-For development without a Tellybox, run the mock server: `python -m pytellybox.mock --port 8099 --token tbx_dev`.
+For development without a Tellybox, run the mock server: `python -m pytellybox.mock --port 8099 --token tbx_dev` (add `--read-token tbx_ro` for a read-only token). Tests can use `MockTellybox` from `pytellybox.mock` with aiohttp's `TestServer`.
 
 The API contract is Tellybox's [`docs/admin-api.md`](https://github.com/sandermvanvliet/Tellybox/blob/main/docs/admin-api.md) and [`docs/kid-api.md`](https://github.com/sandermvanvliet/Tellybox/blob/main/docs/kid-api.md). Tellybox is for the LAN and Tailscale only; use HTTPS behind your reverse proxy, and keep tokens out of logs.
 
