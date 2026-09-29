@@ -1,4 +1,10 @@
-# pytellybox
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sandermvanvliet/Tellybox/main/docs/images/brand/logo-dark.svg">
+    <img src="https://raw.githubusercontent.com/sandermvanvliet/Tellybox/main/docs/images/brand/logo.svg" alt="Tellybox" width="420">
+  </picture>
+  <br>pytellybox
+</h1>
 
 An async Python client for [Tellybox](https://github.com/sandermvanvliet/Tellybox), the self-hosted app that lets young kids pick parent-approved videos for the TV within a daily time allowance. It is the library behind the [Home Assistant integration](https://github.com/sandermvanvliet/ha-tellybox).
 
