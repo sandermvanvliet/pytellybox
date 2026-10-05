@@ -4,6 +4,10 @@ Release notes for pytellybox. The workflow in `.github/workflows/publish.yml` pu
 
 ## Unreleased
 
+## 0.3.0
+
+- No API changes. The version is aligned with Tellybox 0.3.0 and the Home Assistant integration 0.3.0; it works with that Tellybox release (the client already covers its admin and kid API fields).
+
 ## 0.2.0
 
 - Fix: a profile with an unlimited allowance (`allowance_s` null) no longer breaks parsing of the admin state; `Profile.allowance_s` is now `int | None`.
