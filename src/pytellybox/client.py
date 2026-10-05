@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any
 
 import aiohttp
@@ -18,7 +18,7 @@ from pytellybox.errors import (
     TellyboxTimeUpError,
     TellyboxUnavailableError,
 )
-from pytellybox.models import AdminState, Home, Info, KidProfile, Show
+from pytellybox.models import AdminState, Home, Info, KidProfile, KidState, Show
 
 DEFAULT_TIMEOUT_S = 10.0
 EVENTS_READ_TIMEOUT_S = 45.0  # Tellybox sends a keepalive every 15 s
@@ -106,7 +106,11 @@ class TellyboxClient:
         breaks, the iterator raises TellyboxConnectionError; it never reconnects on its own (the caller
         decides the backoff). A 401 on connect raises TellyboxAuthError.
         """
-        path = "/api/admin/events"
+        async for payload in self._stream("/api/admin/events"):
+            yield _parse_event(payload, AdminState.from_dict)
+
+    async def _stream(self, path: str) -> AsyncIterator[str]:
+        """The `data:` payloads of one SSE stream; always ends by raising TellyboxConnectionError."""
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=self._timeout.total, sock_read=EVENTS_READ_TIMEOUT_S)
         headers = {**self._headers(path), "Accept": "text/event-stream"}
         try:
@@ -119,7 +123,7 @@ class TellyboxClient:
                     if not line:
                         if data:
                             payload, data = "\n".join(data), []
-                            yield _parse_event(payload)
+                            yield payload
                     elif line.startswith(":"):
                         continue
                     elif line.startswith("data:"):
@@ -177,6 +181,19 @@ class TellyboxClient:
             conflict_is_time_up=True,
         )
 
+    async def kid_state(self) -> KidState:
+        """`GET /api/kid/state`: what the kid screen shows live (the sun, now playing, the TV, the sessions)."""
+        return KidState.from_dict(await self._request("GET", "/api/kid/state"))
+
+    async def kid_events(self) -> AsyncIterator[KidState]:
+        """`GET /api/kid/events` (no token): yields the current kid state at once, then one per change.
+
+        Same behaviour as `events()`: keepalives are skipped and the iterator ends by raising
+        TellyboxConnectionError.
+        """
+        async for payload in self._stream("/api/kid/events"):
+            yield _parse_event(payload, KidState.from_dict)
+
     async def pause(self) -> None:
         """`POST /api/kid/pause`."""
         await self._request("POST", "/api/kid/pause", json_body={})
@@ -201,10 +218,10 @@ def _profiles_param(profile_ids: Sequence[int] | None) -> dict[str, str] | None:
     return {"profiles": _csv(profile_ids)} if profile_ids is not None else None
 
 
-def _parse_event(payload: str) -> AdminState:
+def _parse_event[T](payload: str, parse: Callable[[dict[str, Any]], T]) -> T:
     try:
-        return AdminState.from_dict(json.loads(payload))
-    except (ValueError, KeyError, TypeError):
+        return parse(json.loads(payload))
+    except (ValueError, KeyError, TypeError, AttributeError):
         raise TellyboxError("Tellybox sent an event that is not a state") from None
 
 

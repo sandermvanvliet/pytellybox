@@ -1,10 +1,10 @@
 """Models parse the payloads of docs/admin-api.md and docs/kid-api.md (contract)."""
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
-from pytellybox import AdminState, Home, Info
+from pytellybox import AdminState, Home, Info, KidProfile, KidState
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -48,3 +48,67 @@ def test_info_and_home():
                                       "progress": 0.4, "finished": False, "kind": "resume"}],
                         "shows": [{"show_id": 2, "artwork": "/img/show/2.jpg", "title": "Pups"}]})
     assert h.continue_watching[0].kind == "resume" and h.shows[0].title == "Pups"
+
+
+def test_admin_state_sessions_and_inbox():
+    s = AdminState.from_dict(load("admin_state.json"))
+    assert [x.key for x in s.sessions] == ["tv"]
+    assert s.sessions[0].label == "TV" and s.sessions[0].profile_ids == (1,) and s.sessions[0].device_id is None
+    assert s.inbox.pending == 4 and s.inbox.unhealthy == 0
+    assert s.inbox.latest_received_at == datetime(2026, 9, 29, 11, 42, tzinfo=UTC)
+
+
+def test_older_server_without_newer_fields():
+    d = load("admin_state.json")
+    for key in ("sessions", "inbox"):
+        del d[key]
+    for p in d["profiles"]:
+        for key in ("allowance_source", "max_session_source", "visible_shows"):
+            del p[key]
+    s = AdminState.from_dict(d)
+    assert s.sessions == () and s.inbox.pending == 0 and s.inbox.latest_received_at is None
+    assert s.profile(1).visible_shows is None and s.profile(1).allowance_source == "custom"
+
+
+def test_profile_sources_and_visible_shows():
+    s = AdminState.from_dict(load("admin_state.json"))
+    assert (s.profile(1).allowance_source, s.profile(1).max_session_source) == ("inherit", "custom")
+    assert s.profile(1).visible_shows == 2
+
+
+def test_unlimited_allowance_is_none():
+    d = load("admin_state.json")
+    d["profiles"][0].update(allowance_s=None, allowance_source="unlimited", visible_shows=0)
+    p = AdminState.from_dict(d).profile(1)
+    assert p.allowance_s is None and p.allowance_source == "unlimited" and p.visible_shows == 0
+
+
+def test_kid_profile_new_fields_and_defaults():
+    p = KidProfile.from_dict({"profile_id": 1, "name": "Mila", "ui_mode": "text", "watch_in_app": True,
+                              "time_up": True, "fraction_left": 0.5, "last_five": True, "unlimited": False})
+    assert p.ui_mode == "text" and p.watch_in_app and p.time_up and p.fraction_left == 0.5 and p.last_five
+    old = KidProfile.from_dict({"profile_id": 1, "name": "Mila", "picture": None, "avatar": "fox"})
+    assert old.ui_mode == "icons" and not old.watch_in_app and not old.time_up
+
+
+def test_kid_state():
+    s = KidState.from_dict({
+        "tv": "ok", "device_name": "Living Room TV",
+        "now_playing": {"episode_id": 4, "show_id": 2, "thumb": "/img/episode/4.jpg", "title": "Alongside",
+                        "state": "playing"},
+        "watching": [1], "sky": {"fraction_left": 0.62, "last_five": False, "unlimited": False}, "time_up": False,
+        "profiles": {"1": {"fraction_left": 0.62, "last_five": False, "unlimited": False, "time_up": False},
+                     "2": {"fraction_left": None, "last_five": False, "unlimited": True, "time_up": False}},
+        "day": "2026-09-29",
+        "sessions": [{"key": "device:abc", "target": "device", "label": "iPhone Safari", "device_id": "abc",
+                      "episode_id": 4, "show_id": 2, "profile_ids": [1], "state": "paused"}],
+    })
+    assert s.tv == "ok" and s.device_name == "Living Room TV" and s.watching == (1,)
+    assert s.now_playing.thumb == "/img/episode/4.jpg" and s.sky.fraction_left == 0.62
+    assert s.profiles[2].unlimited and s.day == date(2026, 9, 29)
+    assert s.sessions[0].target == "device" and s.sessions[0].label == "iPhone Safari"
+
+
+def test_kid_state_nothing_playing():
+    s = KidState.from_dict({"tv": "unreachable"})
+    assert s.now_playing is None and s.watching == () and s.profiles == {} and s.sessions == () and s.day is None

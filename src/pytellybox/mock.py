@@ -3,7 +3,7 @@
 `python -m pytellybox.mock --port 8099 --token tbx_dev [--read-token tbx_ro]` serves:
 - `/api/info`, `/api/admin/state`, `/api/admin/events` (SSE with keepalive), the override routes, with the
   same auth rules as Tellybox (401 / 403, a read-only token via `read_tokens`);
-- `/api/kid/profiles`, `/home`, `/shows/{id}`, `/state`, `/play` (409 when a watcher can't start), `/pause`,
+- `/api/kid/profiles`, `/home`, `/shows/{id}`, `/state`, `/events` (SSE), `/play` (409 when a watcher can't start), `/pause`,
   `/resume`;
 - `/img/...` placeholder images.
 Overrides change the scripted state the way Tellybox would (extra time, unlimited, block, clear, stop) and
@@ -61,6 +61,7 @@ class MockTellybox:
         self.calls: list[dict[str, Any]] = []
         self._state: dict[str, Any] = copy.deepcopy(state) if state is not None else default_state()
         self._subscribers: set[asyncio.Queue[str | None]] = set()
+        self._kid_subscribers: set[asyncio.Queue[str | None]] = set()
         self._runner: web.AppRunner | None = None
         self.app = web.Application(middlewares=[self._record, self._auth])
         self.app.on_shutdown.append(self._close_streams)
@@ -77,6 +78,7 @@ class MockTellybox:
             web.get("/api/kid/home", self._kid_home),
             web.get("/api/kid/shows/{show_id}", self._kid_show),
             web.get("/api/kid/state", self._kid_state),
+            web.get("/api/kid/events", self._kid_events),
             web.post("/api/kid/play", self._kid_play),
             web.post("/api/kid/pause", self._kid_pause),
             web.post("/api/kid/resume", self._kid_resume),
@@ -100,6 +102,9 @@ class MockTellybox:
         payload = json.dumps(self._state)
         for queue in self._subscribers:
             queue.put_nowait(payload)
+        kid_payload = json.dumps(self._kid_state_dict())
+        for queue in self._kid_subscribers:
+            queue.put_nowait(kid_payload)
 
     async def start(self, host: str = "127.0.0.1", port: int = 0) -> str:
         """Listen on host:port (0 = any free port) and return the base URL."""
@@ -143,17 +148,24 @@ class MockTellybox:
     async def _info(self, request: web.Request) -> web.Response:
         s = self._state
         return web.json_response({"instance_id": s["instance_id"], "version": s["version"], "api": 1,
-                                  "capabilities": ["state", "events", "overrides", "profiles"]})
+                                  "capabilities": ["state", "events", "overrides", "profiles", "inbox"]})
 
     async def _get_state(self, request: web.Request) -> web.Response:
         return web.json_response(self._state)
 
     async def _events(self, request: web.Request) -> web.StreamResponse:
+        return await self._stream(request, self._subscribers, lambda: self._state)
+
+    async def _kid_events(self, request: web.Request) -> web.StreamResponse:
+        return await self._stream(request, self._kid_subscribers, self._kid_state_dict)
+
+    async def _stream(self, request: web.Request, subscribers: set[asyncio.Queue[str | None]],
+                      current: Callable[[], dict[str, Any]]) -> web.StreamResponse:
         resp = web.StreamResponse(headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"})
         await resp.prepare(request)
         queue: asyncio.Queue[str | None] = asyncio.Queue()
-        queue.put_nowait(json.dumps(self._state))
-        self._subscribers.add(queue)
+        queue.put_nowait(json.dumps(current()))
+        subscribers.add(queue)
         try:
             while True:
                 try:
@@ -167,11 +179,11 @@ class MockTellybox:
         except ConnectionResetError:
             pass
         finally:
-            self._subscribers.discard(queue)
+            subscribers.discard(queue)
         return resp
 
     async def _close_streams(self, app: web.Application) -> None:
-        for queue in list(self._subscribers):
+        for queue in [*self._subscribers, *self._kid_subscribers]:
             queue.put_nowait(None)
 
     async def _ids(self, request: web.Request, body: Any) -> list[int] | web.Response:
@@ -215,9 +227,12 @@ class MockTellybox:
             elif p["unlimited"]:
                 p["remaining_s"], p["can_start"], p["reason"] = None, True, None
             else:
-                left = max(p["allowance_s"] + (p["extra_s"] or 0) - (p["used_s"] or 0), 0)
-                p["remaining_s"], p["can_start"] = left, left > 0
-                p["reason"] = None if left > 0 else "allowance"
+                if p["allowance_s"] is None:  # an unlimited allowance (A-23)
+                    p["remaining_s"], p["can_start"], p["reason"] = None, True, None
+                else:
+                    left = max(p["allowance_s"] + (p["extra_s"] or 0) - (p["used_s"] or 0), 0)
+                    p["remaining_s"], p["can_start"] = left, left > 0
+                    p["reason"] = None if left > 0 else "allowance"
             p["last_five"] = p["remaining_s"] is not None and 0 < p["remaining_s"] <= _LAST_FIVE_S
         if watchers is None:
             watchers = (state.get("now_playing") or {}).get("profile_ids", [])
@@ -237,6 +252,7 @@ class MockTellybox:
 
     def _stop_playback(self) -> None:
         self._state["now_playing"] = None
+        self._state["sessions"] = []
         for p in self._state["profiles"]:
             p["watching"] = False
 
@@ -321,12 +337,12 @@ class MockTellybox:
         playing = s.get("now_playing")
         profiles = {}
         for p in s["profiles"]:
-            allowance = p["allowance_s"] + (p["extra_s"] or 0)
+            allowance = (p["allowance_s"] or 0) + (p["extra_s"] or 0)
             fraction = None if p["remaining_s"] is None else round(p["remaining_s"] / allowance, 3) if allowance else 0
             profiles[str(p["id"])] = {"fraction_left": fraction, "last_five": p["last_five"],
                                       "unlimited": p["unlimited"], "time_up": p["can_start"] is False}
         return {
-            "tv": "ok" if s["tv"]["reachable"] else "unreachable",
+            "tv": "ok" if s["tv"]["reachable"] else "unreachable", "device_name": s["tv"]["device"],
             "now_playing": None if not playing else {
                 "episode_id": playing["episode_id"], "show_id": playing["show_id"],
                 "thumb": f"/img/episode/{playing['episode_id']}.jpg", "title": playing["title"],
@@ -334,6 +350,10 @@ class MockTellybox:
             "watching": list(playing["profile_ids"]) if playing else [],
             "sky": {"fraction_left": None, "last_five": s["group"]["last_five"], "unlimited": False},
             "time_up": s["group"]["time_up"], "profiles": profiles, "day": s["day"]["date"],
+            "sessions": [
+                {k: x.get(k) for k in ("key", "target", "label", "device_id", "episode_id", "show_id", "profile_ids",
+                                       "state")}
+                for x in s.get("sessions", [])],
         }
 
     @staticmethod
@@ -345,7 +365,7 @@ class MockTellybox:
     async def _kid_profiles(self, request: web.Request) -> web.Response:
         return web.json_response([
             {"profile_id": p["id"], "name": p["name"], "picture": None, "avatar": p["avatar"],
-             "time_up": p["can_start"] is False, "fraction_left": None, "last_five": p["last_five"],
+             "ui_mode": "icons", "watch_in_app": False, "time_up": p["can_start"] is False, "fraction_left": None, "last_five": p["last_five"],
              "unlimited": p["unlimited"]}
             for p in self._state["profiles"]])
 
@@ -393,6 +413,10 @@ class MockTellybox:
         self._state["now_playing"] = {
             "episode_id": episode_id, "show_id": e["show_id"], "title": e["title"], "show": _SHOWS[e["show_id"]],
             "state": "playing", "position_s": 0, "duration_s": e["duration_s"], "profile_ids": ids}
+        self._state["sessions"] = [{
+            "key": "tv", "target": "tv", "label": self._state["tv"]["device"], "device_id": None,
+            "episode_id": episode_id, "show_id": e["show_id"], "title": e["title"], "state": "playing",
+            "position_s": 0, "duration_s": e["duration_s"], "profile_ids": ids}]
         for p in self._state["profiles"]:
             p["watching"] = p["id"] in ids
         self._refresh(ids)
