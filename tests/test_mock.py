@@ -197,3 +197,44 @@ def test_cli_parses(monkeypatch):
     monkeypatch.setattr("pytellybox.mock._serve", fake_serve)
     main(["--port", "8123", "--token", "tbx_a", "--read-token", "tbx_r"])
     assert seen == {"host": "127.0.0.1", "port": 8123, "tokens": {"tbx_a"}, "read": {"tbx_r"}}
+
+
+async def test_info_lists_inbox_capability(client):
+    assert "inbox" in (await client.info()).capabilities
+
+
+async def test_kid_state_and_events_follow_playback(client, mock):
+    state = await client.kid_state()
+    assert state.tv == "ok" and state.device_name == "TV" and state.now_playing.episode_id == 4
+    assert [s.key for s in state.sessions] == ["tv"]
+    stream = client.kid_events()
+    assert (await next_event(stream)).watching == (1,)
+    await client.play(5, [1])
+    after = await next_event(stream)
+    assert after.now_playing.episode_id == 5 and after.sessions[0].episode_id == 5
+    await client.stop_now()
+    stopped = await next_event(stream)
+    assert stopped.now_playing is None and stopped.sessions == ()
+    await stream.aclose()
+
+
+async def test_admin_sessions_follow_playback(client, mock):
+    await client.play(6, [1])
+    assert [(s.key, s.episode_id) for s in (await client.state()).sessions] == [("tv", 6)]
+    await client.stop_now()
+    assert (await client.state()).sessions == ()
+
+
+async def test_unlimited_allowance_profile(client, mock):
+    state = dict(mock.state)
+    state["profiles"][1].update(allowance_s=None, allowance_source="unlimited")
+    mock.set_state(state)
+    await client.add_time(5, [2])  # recomputes the timer
+    noah = (await client.state()).profile(2)
+    assert noah.allowance_s is None and noah.remaining_s is None and noah.can_start
+    assert noah.allowance_source == "unlimited"
+
+
+async def test_kid_profiles_carry_ui_fields(client):
+    profiles = await client.kid_profiles()
+    assert profiles[0].ui_mode == "icons" and profiles[0].watch_in_app is False

@@ -359,3 +359,27 @@ async def test_events_connection_refused(session):
     with pytest.raises(TellyboxConnectionError):
         async for _ in c.events():
             pass
+
+
+async def test_kid_state(api, script):
+    script.respond = reply({"tv": "ok", "device_name": "TV", "watching": [1], "time_up": False})
+    state = await api.kid_state()
+    assert state.tv == "ok" and state.device_name == "TV" and state.watching == (1,)
+    assert script.last["path"] == "/api/kid/state" and script.last["auth"] is None
+
+
+async def test_kid_events_stream_needs_no_token(api, script):
+    script.respond = sse([event({"tv": "ok", "watching": []}), b": keepalive\n\n", event({"tv": "unreachable"})])
+    got = []
+    with pytest.raises(TellyboxConnectionError, match="ended"):
+        async for state in api.kid_events():
+            got.append(state.tv)
+    assert got == ["ok", "unreachable"]
+    assert script.last["path"] == "/api/kid/events" and script.last["auth"] is None
+
+
+async def test_kid_events_bad_payload(api, script):
+    script.respond = sse([b"data: [1, 2]\n\n"])
+    with pytest.raises(TellyboxError, match="not a state"):
+        async for _ in api.kid_events():
+            pass

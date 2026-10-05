@@ -8,8 +8,8 @@
 
 An async Python client for [Tellybox](https://github.com/sandermvanvliet/Tellybox), the self-hosted app that lets young kids pick parent-approved videos for the TV within a daily time allowance. It is the library behind the [Home Assistant integration](https://github.com/sandermvanvliet/ha-tellybox).
 
-- **Admin API** (bearer token from Tellybox's *Integrations* page): live state and its event stream, and the parent overrides (extra time, unlimited today, block today, stop now, clear today) for everyone or for chosen kids.
-- **Kid API** (no token): browse shows and episodes, play, pause and resume. A play is refused when someone is out of time, because Tellybox's timer always decides.
+- **Admin API** (bearer token from Tellybox's *Integrations* page): live state (including the active sessions, the subscription inbox and how many shows each kid can see) and its event stream, and the parent overrides (extra time, unlimited today, block today, stop now, clear today) for everyone or for chosen kids.
+- **Kid API** (no token): browse shows and episodes, play, pause and resume, and the live kid state with its event stream. A play is refused when someone is out of time, because Tellybox's timer always decides.
 
 ```python
 import aiohttp
