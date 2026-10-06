@@ -1,6 +1,6 @@
 """Async client for Tellybox (https://github.com/sandermvanvliet/Tellybox)."""
 
-from pytellybox.client import EXTRA_MINUTES_MAX, TellyboxClient
+from pytellybox.client import EXTRA_MINUTES_MAX, HISTORY_DAYS_MAX, TellyboxClient
 from pytellybox.errors import (
     TellyboxAuthError,
     TellyboxConnectionError,
@@ -29,18 +29,23 @@ from pytellybox.models import (
     KidSession,
     KidSky,
     KidState,
+    LastWatched,
     NowPlaying,
     Profile,
+    ProfileUsage,
     Show,
     ShowRef,
     Session,
     Tile,
+    UsageDay,
+    UsageHistory,
 )
 
 __all__ = [
-    "EXTRA_MINUTES_MAX", "LAST_FIVE_S", "TV", "AdminState", "Day", "Disk", "Group", "Home", "Image", "Inbox", "Info", "Jobs",
-    "KidNowPlaying", "KidProfile", "KidProfileState", "KidSession", "KidSky", "KidState", "NowPlaying", "Profile",
+    "EXTRA_MINUTES_MAX", "HISTORY_DAYS_MAX", "LAST_FIVE_S", "TV", "AdminState", "Day", "Disk", "Group", "Home", "Image", "Inbox", "Info", "Jobs",
+    "KidNowPlaying", "KidProfile", "KidProfileState", "KidSession", "KidSky", "KidState", "LastWatched", "NowPlaying",
+    "Profile", "ProfileUsage",
     "Session", "Show", "ShowRef", "TellyboxAuthError", "TellyboxClient", "TellyboxConnectionError", "TellyboxError",
     "TellyboxForbiddenError", "TellyboxNotFoundError", "TellyboxRequestError", "TellyboxTimeUpError",
-    "TellyboxUnavailableError", "Tile",
+    "TellyboxUnavailableError", "Tile", "UsageDay", "UsageHistory",
 ]

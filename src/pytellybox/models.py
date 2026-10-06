@@ -42,6 +42,10 @@ class Info:
     def from_dict(cls, d: dict[str, Any]) -> Info:
         return cls(d["instance_id"], d["version"], int(d["api"]), tuple(d.get("capabilities", ())))
 
+    def supports(self, capability: str) -> bool:
+        """True when the server advertises `capability` (e.g. `"history"`)."""
+        return capability in self.capabilities
+
 
 @dataclass(frozen=True)
 class Day:
@@ -421,3 +425,67 @@ class KidState:
             {int(k): KidProfileState.from_dict(v) for k, v in (d.get("profiles") or {}).items()},
             _date(d.get("day")), tuple(KidSession.from_dict(x) for x in d.get("sessions") or ()),
         )
+
+
+# --------------------------------------------------------------------------- history (HA-12)
+
+
+@dataclass(frozen=True)
+class UsageDay:
+    """One timer day of one profile (WT-1). A day without a row counts as zeros."""
+
+    date: date
+    used_s: int
+    extra_s: int
+    unlimited: bool
+    blocked: bool
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> UsageDay:
+        return cls(date.fromisoformat(d["date"]), int(d["used_s"]), int(d["extra_s"]),
+                   bool(d["unlimited"]), bool(d["blocked"]))
+
+
+@dataclass(frozen=True)
+class LastWatched:
+    """A profile's latest watch session (open or closed). `ended_at` None means watching now."""
+
+    episode_id: int | None  # None once the episode is deleted
+    title: str | None
+    show: str | None
+    started_at: datetime
+    ended_at: datetime | None
+    target: str  # tv | device
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> LastWatched:
+        return cls(_opt_int(d.get("episode_id")), d.get("title"), d.get("show"),
+                   datetime.fromisoformat(d["started_at"]), _dt(d.get("ended_at")), d["target"])
+
+
+@dataclass(frozen=True)
+class ProfileUsage:
+    id: int
+    name: str
+    days: tuple[UsageDay, ...]  # exactly `days` entries, newest first
+    last_watched: LastWatched | None
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ProfileUsage:
+        last = d.get("last_watched")
+        return cls(int(d["id"]), d["name"], tuple(UsageDay.from_dict(x) for x in d.get("days", ())),
+                   LastWatched.from_dict(last) if last else None)
+
+
+@dataclass(frozen=True)
+class UsageHistory:
+    """`GET /api/admin/history` (HA-12): daily totals and the last watched episode per profile."""
+
+    today: date  # the current timer day
+    days: int
+    profiles: tuple[ProfileUsage, ...]
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> UsageHistory:
+        return cls(date.fromisoformat(d["today"]), int(d["days"]),
+                   tuple(ProfileUsage.from_dict(p) for p in d.get("profiles", ())))

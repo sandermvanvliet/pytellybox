@@ -281,3 +281,58 @@ async def test_mock_serves_the_old_shape_and_kid_profiles_follow_the_state(mock,
     assert (p.picture, p.watch_in_app, p.ui_mode) == (None, None, None)
     kid = (await client.kid_profiles())[0]
     assert kid.picture is None and kid.watch_in_app is False and kid.ui_mode == "icons"
+
+
+# --------------------------------------------------------------------------- history (HA-12)
+
+
+async def test_history_shape_through_the_client(client):
+    assert (await client.info()).supports("history")
+    h = await client.history()
+    assert h.days == 7 and [p.name for p in h.profiles] == ["Mila", "Noah"]
+    assert h.today.isoformat() == (await client.state()).day.date.isoformat()
+    for p in h.profiles:
+        assert len(p.days) == 7
+        assert [d.date for d in p.days] == sorted((d.date for d in p.days), reverse=True)
+        assert p.days[0].date == h.today
+    mila, noah = h.profiles
+    assert mila.days[0].used_s == 1200 and mila.days[1].extra_s == 900 and mila.days[3].used_s == 0
+    assert mila.days[2].unlimited and noah.days[0].blocked
+    assert mila.last_watched.title == "Alongside" and mila.last_watched.show == "Harbour Pups"
+    assert noah.last_watched is None
+
+
+async def test_history_days_and_profile_filter(client):
+    h = await client.history(days=1, profile_ids=[2])
+    assert [p.id for p in h.profiles] == [2] and len(h.profiles[0].days) == 1
+    assert len((await client.history(days=21)).profiles[0].days) == 21
+
+
+async def test_history_bad_query_is_422(mock, client, session):
+    with pytest.raises(TellyboxRequestError):
+        await client.history(profile_ids=[99])
+    for query in ("days=0", "days=22", "days=x", "profile_ids=a", "profile_ids=1,1"):
+        async with session.get(f"{mock.base_url}/api/admin/history?{query}",
+                               headers={"Authorization": f"Bearer {READ_TOKEN}"}) as resp:
+            assert resp.status == 422, query
+
+
+async def test_history_needs_a_token_but_read_is_enough(mock, session):
+    with pytest.raises(TellyboxAuthError):
+        await TellyboxClient(mock.base_url, None, session).history()
+    assert (await TellyboxClient(mock.base_url, READ_TOKEN, session).history()).profiles
+
+
+async def test_history_old_server_option(session):
+    from aiohttp.test_utils import TestServer
+
+    old = MockTellybox(token="tbx_mock", history=False)
+    server = TestServer(old.app)
+    await server.start_server()
+    try:
+        c = TellyboxClient(str(server.make_url("")).rstrip("/"), "tbx_mock", session)
+        assert not (await c.info()).supports("history")
+        with pytest.raises(TellyboxNotFoundError):
+            await c.history()
+    finally:
+        await server.close()

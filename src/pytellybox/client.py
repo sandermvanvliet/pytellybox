@@ -18,11 +18,12 @@ from pytellybox.errors import (
     TellyboxTimeUpError,
     TellyboxUnavailableError,
 )
-from pytellybox.models import AdminState, Home, Image, Info, KidProfile, KidState, Show
+from pytellybox.models import AdminState, Home, Image, Info, KidProfile, KidState, Show, UsageHistory
 
 DEFAULT_TIMEOUT_S = 10.0
 EVENTS_READ_TIMEOUT_S = 45.0  # Tellybox sends a keepalive every 15 s
 EXTRA_MINUTES_MAX = 240
+HISTORY_DAYS_MAX = 21
 IMAGE_MAX_BYTES = 2 * 1024 * 1024
 IMAGE_PATH_PREFIXES = ("/img/", "/static/avatars/")
 
@@ -100,6 +101,21 @@ class TellyboxClient:
     async def state(self) -> AdminState:
         """`GET /api/admin/state` (read scope)."""
         return AdminState.from_dict(await self._request("GET", "/api/admin/state"))
+
+    async def history(self, days: int = 7, profile_ids: Sequence[int] | None = None) -> UsageHistory:
+        """`GET /api/admin/history?days=7&profile_ids=1,3` (read scope, HA-12).
+
+        Daily totals of the last `days` timer days (1..21, else ValueError before any request) and the last
+        watched episode, per profile; `profile_ids` None = every profile. An older Tellybox without the
+        `history` capability answers 404, which raises TellyboxNotFoundError (check `Info.supports("history")`
+        first); a bad or unknown profile id raises TellyboxRequestError (422).
+        """
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= HISTORY_DAYS_MAX:
+            raise ValueError(f"days must be an integer from 1 to {HISTORY_DAYS_MAX}")
+        params = {"days": str(days)}
+        if profile_ids is not None:
+            params["profile_ids"] = _csv(profile_ids)
+        return UsageHistory.from_dict(await self._request("GET", "/api/admin/history", params=params))
 
     async def events(self) -> AsyncIterator[AdminState]:
         """`GET /api/admin/events` (read scope): yields the current state at once, then one per change.
