@@ -19,6 +19,7 @@ from pytellybox.models import (
     Disk,
     Group,
     Home,
+    Image,
     Inbox,
     Info,
     Jobs,
@@ -37,7 +38,7 @@ from pytellybox.models import (
 )
 
 __all__ = [
-    "EXTRA_MINUTES_MAX", "LAST_FIVE_S", "TV", "AdminState", "Day", "Disk", "Group", "Home", "Inbox", "Info", "Jobs",
+    "EXTRA_MINUTES_MAX", "LAST_FIVE_S", "TV", "AdminState", "Day", "Disk", "Group", "Home", "Image", "Inbox", "Info", "Jobs",
     "KidNowPlaying", "KidProfile", "KidProfileState", "KidSession", "KidSky", "KidState", "NowPlaying", "Profile",
     "Session", "Show", "ShowRef", "TellyboxAuthError", "TellyboxClient", "TellyboxConnectionError", "TellyboxError",
     "TellyboxForbiddenError", "TellyboxNotFoundError", "TellyboxRequestError", "TellyboxTimeUpError",

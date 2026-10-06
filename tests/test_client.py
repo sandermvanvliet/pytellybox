@@ -383,3 +383,82 @@ async def test_kid_events_bad_payload(api, script):
     with pytest.raises(TellyboxError, match="not a state"):
         async for _ in api.kid_events():
             pass
+
+
+# --------------------------------------------------------------------------- image()
+
+
+def image_reply(body: bytes, content_type: str = "image/jpeg", charset: str | None = None):
+    def respond(request):
+        return web.Response(body=body, content_type=content_type, charset=charset)
+
+    return respond
+
+
+@pytest.mark.parametrize(("path", "ctype"), [("/img/profile/1.jpg", "image/jpeg"),
+                                             ("/static/avatars/fox.svg", "image/svg+xml")])
+async def test_image_returns_bytes_and_bare_content_type(api, script, path, ctype):
+    script.respond = image_reply(b"data", ctype, charset="utf-8" if ctype.endswith("xml") else None)
+    image = await api.image(path)
+    assert image == client_module.Image(b"data", ctype)
+    assert script.last["path"] == path and script.last["auth"] is None  # no Authorization, though a token is set
+
+
+@pytest.mark.parametrize("path", ["/api/admin/state", "img/profile/1.jpg", "/imgs/x.jpg", "/static/other/x.svg",
+                                  "/img/../api/admin/state", "http://elsewhere.example/img/a.jpg", ""])
+async def test_image_bad_path_raises_before_any_request(api, script, path):
+    with pytest.raises(ValueError):
+        await api.image(path)
+    assert script.requests == []
+
+
+async def test_image_404_is_not_found(api, script):
+    script.respond = reply({"detail": "not_found"}, 404)
+    with pytest.raises(TellyboxNotFoundError):
+        await api.image("/img/profile/9.jpg")
+
+
+async def test_image_exactly_at_the_cap_is_fine(api, script):
+    script.respond = image_reply(b"x" * client_module.IMAGE_MAX_BYTES)
+    assert len((await api.image("/img/profile/1.jpg")).content) == client_module.IMAGE_MAX_BYTES
+
+
+async def test_image_oversize_is_an_error_and_not_fully_read(api, script):
+    total = 64 * 1024 * 1024
+    sent = 0
+
+    async def endless(request):
+        nonlocal sent
+        resp = web.StreamResponse(headers={"Content-Type": "image/jpeg"})
+        await resp.prepare(request)
+        try:
+            while sent < total:
+                await resp.write(b"x" * 65536)
+                sent += 65536
+        except (ConnectionResetError, ConnectionError):
+            pass
+        return resp
+
+    script.respond = endless
+    with pytest.raises(TellyboxError, match="too large") as err:
+        await api.image("/img/profile/1.jpg")
+    assert TOKEN not in str(err.value)
+    assert sent < total
+
+
+async def test_image_timeout_is_a_connection_error(script, session):
+    async def slow(request):
+        await asyncio.sleep(1)
+        return web.Response(body=b"x")
+
+    script.respond = slow
+    c = TellyboxClient(script.url, TOKEN, session, timeout=0.05)  # type: ignore[attr-defined]
+    with pytest.raises(TellyboxConnectionError):
+        await c.image("/img/profile/1.jpg")
+
+
+async def test_image_connection_refused(session):
+    c = TellyboxClient("http://127.0.0.1:1", TOKEN, session)
+    with pytest.raises(TellyboxConnectionError) as err:
+        await c.image("/img/profile/1.jpg")
+    assert TOKEN not in str(err.value) and "127.0.0.1" not in str(err.value)

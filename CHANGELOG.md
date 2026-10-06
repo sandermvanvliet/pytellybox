@@ -4,6 +4,8 @@ Release notes for pytellybox. The workflow in `.github/workflows/publish.yml` pu
 
 ## Unreleased
 
+- Admin state: per profile `picture`, `watch_in_app` and `ui_mode` (HA-11). New `TellyboxClient.image()` and `Image` to fetch a profile photo or avatar. Older servers without the fields still parse.
+
 ## 0.3.0
 
 - No API changes. The version is aligned with Tellybox 0.3.0 and the Home Assistant integration 0.3.0; it works with that Tellybox release (the client already covers its admin and kid API fields).

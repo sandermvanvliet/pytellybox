@@ -16,11 +16,13 @@
     {"id": 1, "name": "Mila", "avatar": "fox", "allowance_s": 3600, "extra_s": 900, "used_s": 2710,
      "remaining_s": 1790, "unlimited": false, "blocked": false, "mode": "ignore_pauses", "max_session_s": 5400,
      "session_elapsed_s": 1200, "can_start": true, "reason": null, "watching": true, "last_five": false,
-     "allowance_source": "inherit", "max_session_source": "custom", "visible_shows": 2},
+     "allowance_source": "inherit", "max_session_source": "custom", "visible_shows": 2,
+     "picture": "/img/profile/1.jpg", "watch_in_app": false, "ui_mode": "icons"},
     {"id": 2, "name": "Noah", "avatar": null, "allowance_s": 2700, "extra_s": 0, "used_s": 2700,
      "remaining_s": 0, "unlimited": false, "blocked": false, "mode": "ignore_pauses", "max_session_s": null,
      "session_elapsed_s": null, "can_start": false, "reason": "allowance", "watching": false, "last_five": true,
-     "allowance_source": "custom", "max_session_source": "inherit", "visible_shows": 1}
+     "allowance_source": "custom", "max_session_source": "inherit", "visible_shows": 1,
+     "picture": null, "watch_in_app": true, "ui_mode": "text"}
   ],
   "jobs": {"queued": 1, "running": 1, "failed": 0, "held_ready": 3},
   "disk": {"media_bytes": 48213000000, "free_bytes": 120000000000},

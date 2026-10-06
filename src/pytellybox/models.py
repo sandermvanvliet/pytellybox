@@ -133,6 +133,9 @@ class Profile:
     allowance_source: str = "custom"  # inherit | custom | unlimited (A-23)
     max_session_source: str = "custom"  # inherit | custom | unlimited (A-23)
     visible_shows: int | None = None  # shows this kid may see (HA-10); 0 = an empty kid app; None = old server
+    picture: str | None = None  # `/img/profile/{id}.jpg` when the kid has a photo (HA-11); None also on an old server
+    watch_in_app: bool | None = None  # may watch in the kid app on this device (HA-11); None = old server
+    ui_mode: str | None = None  # icons | text (HA-11); None = old server
 
     @property
     def time_up(self) -> bool:
@@ -146,8 +149,17 @@ class Profile:
             d.get("remaining_s"), bool(d.get("unlimited")), bool(d.get("blocked")), d.get("mode", "ignore_pauses"),
             d.get("max_session_s"), d.get("session_elapsed_s"), d.get("can_start"), d.get("reason"),
             bool(d.get("watching")), bool(d.get("last_five")), d.get("allowance_source", "custom"),
-            d.get("max_session_source", "custom"), d.get("visible_shows"),
+            d.get("max_session_source", "custom"), d.get("visible_shows"), d.get("picture"),
+            None if d.get("watch_in_app") is None else bool(d["watch_in_app"]), d.get("ui_mode"),
         )
+
+
+@dataclass(frozen=True)
+class Image:
+    """An image fetched with `TellyboxClient.image()`; `content_type` has no parameters (`image/jpeg`)."""
+
+    content: bytes
+    content_type: str
 
 
 @dataclass(frozen=True)
