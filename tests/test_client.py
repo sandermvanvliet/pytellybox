@@ -462,3 +462,43 @@ async def test_image_connection_refused(session):
     with pytest.raises(TellyboxConnectionError) as err:
         await c.image("/img/profile/1.jpg")
     assert TOKEN not in str(err.value) and "127.0.0.1" not in str(err.value)
+
+
+# --------------------------------------------------------------------------- history (HA-12)
+
+HISTORY = {"today": "2026-10-06", "days": 7, "profiles": []}
+
+
+async def test_history_default_query(api, script):
+    script.respond = reply(HISTORY)
+    h = await api.history()
+    assert h.days == 7 and h.profiles == ()
+    assert script.last["path"] == "/api/admin/history" and script.last["method"] == "GET"
+    assert script.last["query"] == {"days": "7"} and script.last["auth"] == f"Bearer {TOKEN}"
+
+
+async def test_history_query_with_profile_ids(api, script):
+    script.respond = reply(HISTORY)
+    await api.history(days=21, profile_ids=[1, 3])
+    assert script.last["query"] == {"days": "21", "profile_ids": "1,3"}
+
+
+@pytest.mark.parametrize("days", [0, 22, -1, True, "7", 7.0])
+async def test_history_days_out_of_range_makes_no_request(api, script, days):
+    with pytest.raises(ValueError):
+        await api.history(days=days)
+    assert script.requests == []
+
+
+async def test_history_old_server_is_not_found(api, script):
+    script.respond = reply({"detail": "Not Found"}, status=404)
+    with pytest.raises(TellyboxNotFoundError) as err:
+        await api.history()
+    assert TOKEN not in str(err.value) and script.url not in str(err.value)
+
+
+async def test_history_422_is_request_error(api, script):
+    script.respond = reply({"detail": "unknown profile id"}, status=422)
+    with pytest.raises(TellyboxRequestError, match="unknown profile id") as err:
+        await api.history(profile_ids=[99])
+    assert TOKEN not in str(err.value) and script.url not in str(err.value)

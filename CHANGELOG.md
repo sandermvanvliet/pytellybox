@@ -4,6 +4,8 @@ Release notes for pytellybox. The workflow in `.github/workflows/publish.yml` pu
 
 ## Unreleased
 
+- New `TellyboxClient.history()` with the `UsageHistory` models for Tellybox's daily history (HA-12), and `Info.supports()`. An older Tellybox answers 404 (`TellyboxNotFoundError`).
+
 ## 0.4.0
 
 - Admin state: per profile `picture`, `watch_in_app` and `ui_mode` (HA-11). New `TellyboxClient.image()` and `Image` to fetch a profile photo or avatar. Older servers without the fields still parse.

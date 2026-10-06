@@ -7,6 +7,7 @@
   `/resume`;
 - `/img/...` placeholder images (`/img/profile/{id}.jpg` only for a profile with a `picture`, else 404) and
   `/static/avatars/{key}.svg`.
+- `/api/admin/history` (`history` capability; `MockTellybox(history=False)` plays an older server: 404, no capability);
 - per profile `picture`, `watch_in_app` and `ui_mode` (an 'old server' state simply omits them).
 Overrides change the scripted state the way Tellybox would (extra time, unlimited, block, clear, stop) and
 push a new event. Tests and scripts drive it through `MockTellybox`: `set_state(dict)`, `push()`,
@@ -19,6 +20,7 @@ import argparse
 import asyncio
 import copy
 import json
+from datetime import date, timedelta
 from collections.abc import Awaitable, Callable, Iterable
 from importlib import resources
 from typing import Any
@@ -49,6 +51,19 @@ _EPISODES = {
 }
 _SHOWS = {2: "Harbour Pups", 3: "Bubble Bay"}
 
+# Seeded history: day offsets back from today (0 = today); a missing offset counts as zeros.
+_HISTORY_DAYS: dict[int, dict[str, dict[str, Any]]] = {
+    1: {"0": {"used_s": 1200, "extra_s": 0}, "1": {"used_s": 2710, "extra_s": 900},
+        "2": {"used_s": 1800, "extra_s": 0, "unlimited": True}, "4": {"used_s": 600, "extra_s": 0}},
+    2: {"0": {"used_s": 0, "extra_s": 0, "blocked": True}, "1": {"used_s": 3600, "extra_s": 0},
+        "3": {"used_s": 900, "extra_s": 300}},
+}
+_HISTORY_LAST_WATCHED: dict[int, dict[str, Any] | None] = {
+    1: {"episode_id": 4, "title": "Alongside", "show": "Harbour Pups", "started_at": "2026-09-29T07:10:00+00:00",
+        "ended_at": None, "target": "tv"},
+    2: None,
+}
+
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 
@@ -66,11 +81,14 @@ class MockTellybox:
 
     def __init__(
         self, state: dict[str, Any] | None = None, *, token: str = "tbx_mock", read_tokens: Iterable[str] = (),
-        keepalive_s: float = 15.0,
+        keepalive_s: float = 15.0, history: bool = True,
     ) -> None:
         self.tokens: set[str] = {token}
         self.read_tokens: set[str] = set(read_tokens)
         self.keepalive_s = keepalive_s
+        self.history_enabled = history  # False behaves like an older Tellybox: no capability, 404
+        self.history_days: dict[int, dict[str, dict[str, Any]]] = copy.deepcopy(_HISTORY_DAYS)  # profile -> date -> row
+        self.history_last_watched: dict[int, dict[str, Any] | None] = copy.deepcopy(_HISTORY_LAST_WATCHED)
         self.calls: list[dict[str, Any]] = []
         self._state: dict[str, Any] = copy.deepcopy(state) if state is not None else default_state()
         self._subscribers: set[asyncio.Queue[str | None]] = set()
@@ -82,6 +100,7 @@ class MockTellybox:
             web.get("/api/info", self._info),
             web.get("/api/admin/state", self._get_state),
             web.get("/api/admin/events", self._events),
+            web.get("/api/admin/history", self._history),
             web.post("/api/admin/overrides/extra", self._extra),
             web.post("/api/admin/overrides/unlimited", self._unlimited),
             web.post("/api/admin/overrides/block", self._block),
@@ -162,7 +181,48 @@ class MockTellybox:
     async def _info(self, request: web.Request) -> web.Response:
         s = self._state
         return web.json_response({"instance_id": s["instance_id"], "version": s["version"], "api": 1,
-                                  "capabilities": ["state", "events", "overrides", "profiles", "inbox"]})
+                                  "capabilities": self._capabilities()})
+
+    def _capabilities(self) -> list[str]:
+        caps = ["state", "events", "overrides", "profiles", "inbox"]
+        return [*caps, "history"] if self.history_enabled else caps
+
+    async def _history(self, request: web.Request) -> web.Response:
+        if not self.history_enabled:
+            return _json_error(404, "not_found")
+        raw_days = request.query.get("days", "7")
+        try:
+            days = int(raw_days)
+        except ValueError:
+            days = 0
+        if not 1 <= days <= 21:
+            return _json_error(422, "days must be an integer from 1 to 21")
+        profiles = self._state["profiles"]
+        raw_ids = request.query.get("profile_ids")
+        if raw_ids:
+            try:
+                ids = [int(i) for i in raw_ids.split(",")]
+            except ValueError:
+                return _json_error(422, "bad profile_ids")
+            if not 1 <= len(ids) <= 20 or len(set(ids)) != len(ids):
+                return _json_error(422, "profile_ids must be 1-20 distinct ids")
+            if any(i not in [p["id"] for p in profiles] for i in ids):
+                return _json_error(422, "unknown profile id")
+            profiles = [p for p in profiles if p["id"] in ids]
+        today = date.fromisoformat(self._state["day"]["date"])
+        out = []
+        for p in profiles:
+            rows = self.history_days.get(p["id"], {})
+            entries = []
+            for back in range(days):
+                row = rows.get(str(back), {})
+                entries.append({
+                    "date": (today - timedelta(days=back)).isoformat(), "used_s": row.get("used_s", 0),
+                    "extra_s": row.get("extra_s", 0), "unlimited": row.get("unlimited", False),
+                    "blocked": row.get("blocked", False)})
+            out.append({"id": p["id"], "name": p["name"], "days": entries,
+                        "last_watched": self.history_last_watched.get(p["id"])})
+        return web.json_response({"today": today.isoformat(), "days": days, "profiles": out})
 
     async def _get_state(self, request: web.Request) -> web.Response:
         return web.json_response(self._state)

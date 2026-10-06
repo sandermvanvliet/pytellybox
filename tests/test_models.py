@@ -133,3 +133,49 @@ def test_watch_in_app_is_coerced_to_bool_only_when_present():
     d = load("admin_state.json")
     d["profiles"][0]["watch_in_app"] = 1
     assert AdminState.from_dict(d).profile(1).watch_in_app is True
+
+
+# --------------------------------------------------------------------------- history (HA-12)
+
+
+def _history_payload(last_watched):
+    return {"today": "2026-10-06", "days": 2, "profiles": [{
+        "id": 1, "name": "Mila", "last_watched": last_watched,
+        "days": [{"date": "2026-10-06", "used_s": 1200, "extra_s": 0, "unlimited": False, "blocked": False},
+                 {"date": "2026-10-05", "used_s": 2710, "extra_s": 900, "unlimited": True, "blocked": True}]}]}
+
+
+def test_usage_history_parses():
+    from pytellybox import UsageHistory
+
+    h = UsageHistory.from_dict(_history_payload({
+        "episode_id": 4, "title": "Alongside", "show": "Harbour Pups",
+        "started_at": "2026-10-06T07:10:00+00:00", "ended_at": None, "target": "tv"}))
+    assert h.today == date(2026, 10, 6) and h.days == 2
+    mila = h.profiles[0]
+    assert (mila.id, mila.name) == (1, "Mila")
+    assert mila.days[0].date == date(2026, 10, 6) and mila.days[0].used_s == 1200
+    assert mila.days[1].extra_s == 900 and mila.days[1].unlimited and mila.days[1].blocked
+    lw = mila.last_watched
+    assert lw.episode_id == 4 and lw.title == "Alongside" and lw.show == "Harbour Pups"
+    assert lw.started_at == datetime(2026, 10, 6, 7, 10, tzinfo=UTC) and lw.ended_at is None and lw.target == "tv"
+
+
+def test_usage_history_tolerates_missing_last_watched_and_null_episode():
+    from pytellybox import UsageHistory
+
+    assert UsageHistory.from_dict(_history_payload(None)).profiles[0].last_watched is None
+    payload = _history_payload(None)
+    del payload["profiles"][0]["last_watched"]
+    assert UsageHistory.from_dict(payload).profiles[0].last_watched is None
+    lw = UsageHistory.from_dict(_history_payload({
+        "episode_id": None, "title": None, "show": None, "started_at": "2026-10-05T17:00:00Z",
+        "ended_at": "2026-10-05T17:20:00+00:00", "target": "device"})).profiles[0].last_watched
+    assert lw.episode_id is None and lw.title is None and lw.show is None
+    assert lw.started_at.tzinfo is not None and lw.ended_at == datetime(2026, 10, 5, 17, 20, tzinfo=UTC)
+
+
+def test_info_supports():
+    i = Info.from_dict({"instance_id": "abc", "version": "dev", "api": 1, "capabilities": ["state", "history"]})
+    assert i.supports("history") and not i.supports("nope")
+    assert not Info.from_dict({"instance_id": "a", "version": "d", "api": 1}).supports("history")
