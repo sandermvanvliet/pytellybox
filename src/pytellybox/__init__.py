@@ -35,6 +35,7 @@ from pytellybox.models import (
     ProfileUsage,
     Show,
     ShowRef,
+    ServerEvent,
     Session,
     Tile,
     UsageDay,
@@ -45,7 +46,7 @@ __all__ = [
     "EXTRA_MINUTES_MAX", "HISTORY_DAYS_MAX", "LAST_FIVE_S", "TV", "AdminState", "Day", "Disk", "Group", "Home", "Image", "Inbox", "Info", "Jobs",
     "KidNowPlaying", "KidProfile", "KidProfileState", "KidSession", "KidSky", "KidState", "LastWatched", "NowPlaying",
     "Profile", "ProfileUsage",
-    "Session", "Show", "ShowRef", "TellyboxAuthError", "TellyboxClient", "TellyboxConnectionError", "TellyboxError",
+    "ServerEvent", "Session", "Show", "ShowRef", "TellyboxAuthError", "TellyboxClient", "TellyboxConnectionError", "TellyboxError",
     "TellyboxForbiddenError", "TellyboxNotFoundError", "TellyboxRequestError", "TellyboxTimeUpError",
     "TellyboxUnavailableError", "Tile", "UsageDay", "UsageHistory",
 ]

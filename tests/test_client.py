@@ -11,6 +11,7 @@ from aiohttp.test_utils import TestServer
 
 import pytellybox.client as client_module
 from pytellybox import (
+    AdminState,
     TellyboxAuthError,
     TellyboxClient,
     TellyboxConnectionError,
@@ -320,6 +321,85 @@ async def test_events_incomplete_event_is_dropped(api, script, state_dict):
         async for state in api.events():
             got.append(state)
     assert len(got) == 1
+
+
+def named(name: str, body: dict | str) -> bytes:
+    text = body if isinstance(body, str) else json.dumps(body)
+    return f"event: {name}\ndata: {text}\n\n".encode()
+
+
+STOPPED = {"type": "playback_stopped", "at": "2026-10-06T18:02:11.000+00:00", "profile_ids": [1], "reason": "time_up"}
+
+
+async def test_stream_default_requests_no_typed_and_yields_states(api, script, state_dict):
+    script.respond = sse([event(state_dict), event(state_dict)])
+    got = []
+    with pytest.raises(TellyboxConnectionError, match="ended"):
+        async for item in api.stream():
+            got.append(item)
+    assert len(got) == 2 and all(isinstance(i, AdminState) for i in got)
+    assert script.last["path"] == "/api/admin/events" and script.last["query"] == {}
+    assert script.last["auth"] == f"Bearer {TOKEN}"
+
+
+async def test_stream_typed_interleaves_in_order(api, script, state_dict):
+    later = {**state_dict, "version": "later"}
+    script.respond = sse([event(state_dict), named("playback_stopped", STOPPED), event(later),
+                          named("time_up", {"type": "time_up", "at": "2026-10-06T18:02:12Z", "profile_ids": [1]})])
+    got = []
+    with pytest.raises(TellyboxConnectionError, match="ended"):
+        async for item in api.stream(typed=True):
+            got.append(item)
+    assert [type(i).__name__ for i in got] == ["AdminState", "ServerEvent", "AdminState", "ServerEvent"]
+    assert script.last["query"] == {"typed": "1"}
+    assert got[1].type == "playback_stopped" and got[1].reason == "time_up" and got[1].profile_ids == (1,)
+    assert got[3].type == "time_up"
+
+
+async def test_stream_event_name_fills_a_missing_type(api, script, state_dict):
+    script.respond = sse([named("last_five", {"at": "2026-10-06T18:02:12Z", "remaining_s": 300})])
+    with pytest.raises(TellyboxConnectionError):
+        async for item in api.stream(typed=True):
+            assert item.type == "last_five" and item.data["remaining_s"] == 300
+
+
+async def test_stream_keepalive_multiline_and_crlf(api, script, state_dict):
+    lines = json.dumps(STOPPED, indent=1).split("\n")
+    multi = ("event: playback_stopped\r\n" + "".join(f"data: {line}\r\n" for line in lines) + "\r\n").encode()
+    script.respond = sse([b": keepalive\n\n", event(state_dict), b": keepalive\n\n", multi, b": keepalive\n\n"])
+    got = []
+    with pytest.raises(TellyboxConnectionError):
+        async for item in api.stream(typed=True):
+            got.append(item)
+    assert [type(i).__name__ for i in got] == ["AdminState", "ServerEvent"] and got[1].reason == "time_up"
+
+
+async def test_stream_malformed_named_frame_is_skipped(api, script, state_dict, caplog):
+    caplog.set_level("DEBUG")
+    script.respond = sse([named("playback_stopped", "{not json"), named("time_up", "[1, 2]"), event(state_dict),
+                          named("time_up", {"type": "time_up", "at": "2026-10-06T18:02:12Z"})])
+    got = []
+    with pytest.raises(TellyboxConnectionError):
+        async for item in api.stream(typed=True):
+            got.append(item)
+    assert [type(i).__name__ for i in got] == ["AdminState", "ServerEvent"]
+    assert "not json" not in caplog.text and TOKEN not in caplog.text and script.url not in caplog.text  # type: ignore[attr-defined]
+
+
+async def test_stream_malformed_state_frame_raises(api, script):
+    script.respond = sse([b"data: {not json\n\n"])
+    with pytest.raises(TellyboxError, match="not a state"):
+        async for _ in api.stream(typed=True):
+            pass
+
+
+async def test_events_ignores_named_frames(api, script, state_dict):
+    script.respond = sse([named("playback_stopped", STOPPED), event(state_dict), named("x", "{broken")])
+    got = []
+    with pytest.raises(TellyboxConnectionError, match="ended"):
+        async for state in api.events():
+            got.append(state)
+    assert len(got) == 1 and script.last["query"] == {}
 
 
 async def test_events_401_on_connect(api, script):

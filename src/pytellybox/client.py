@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any
 
@@ -18,8 +19,11 @@ from pytellybox.errors import (
     TellyboxTimeUpError,
     TellyboxUnavailableError,
 )
-from pytellybox.models import AdminState, Home, Image, Info, KidProfile, KidState, Show, UsageHistory
+from pytellybox.models import AdminState, Home, Image, Info, KidProfile, KidState, ServerEvent, Show, UsageHistory
 
+_LOGGER = logging.getLogger(__name__)
+
+_STATE_FRAMES = (None, "message", "state")  # SSE event names that carry an AdminState
 DEFAULT_TIMEOUT_S = 10.0
 EVENTS_READ_TIMEOUT_S = 45.0  # Tellybox sends a keepalive every 15 s
 EXTRA_MINUTES_MAX = 240
@@ -122,31 +126,63 @@ class TellyboxClient:
 
         Keepalive comments are skipped. The read timeout is EVENTS_READ_TIMEOUT_S. When the stream ends or
         breaks, the iterator raises TellyboxConnectionError; it never reconnects on its own (the caller
-        decides the backoff). A 401 on connect raises TellyboxAuthError.
+        decides the backoff). A 401 on connect raises TellyboxAuthError. It never asks for typed events and ignores
+        any named frame other than a state; use `stream(typed=True)` for those.
         """
-        async for payload in self._stream("/api/admin/events"):
-            yield _parse_event(payload, AdminState.from_dict)
+        async for name, payload in self._stream("/api/admin/events"):
+            if name in _STATE_FRAMES:
+                yield _parse_event(payload, AdminState.from_dict)
 
-    async def _stream(self, path: str) -> AsyncIterator[str]:
-        """The `data:` payloads of one SSE stream; always ends by raising TellyboxConnectionError."""
+    async def stream(self, *, typed: bool = False) -> AsyncIterator[AdminState | ServerEvent]:
+        """`GET /api/admin/events` (read scope), optionally with the typed events of `?typed=1` (HA-13).
+
+        Yields an AdminState for every state frame and, with `typed=True`, a ServerEvent for every named
+        frame, in the order Tellybox sent them. Without `typed` it requests no typed events, so it yields
+        what `events()` yields. Typed events need `Info.supports("typed_events")`; an older Tellybox ignores
+        the flag and sends only states. A malformed state frame raises TellyboxError; a malformed named frame
+        is skipped. Otherwise the behaviour is that of `events()`: keepalives are skipped and the iterator
+        ends by raising TellyboxConnectionError, never reconnecting on its own.
+        """
+        params = {"typed": "1"} if typed else None
+        async for name, payload in self._stream("/api/admin/events", params):
+            if name in _STATE_FRAMES:
+                yield _parse_event(payload, AdminState.from_dict)
+                continue
+            try:
+                body = json.loads(payload)
+                if not isinstance(body, dict):
+                    raise TypeError
+                event = ServerEvent.from_dict({"type": name, **body})
+            except (ValueError, TypeError):
+                _LOGGER.debug("Skipping a malformed %r event", name[:40])
+                continue
+            yield event
+
+    async def _stream(self, path: str, params: dict[str, str] | None = None) -> AsyncIterator[tuple[str | None, str]]:
+        """The `(event name or None, data payload)` frames of one SSE stream; ends by raising TellyboxConnectionError."""
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=self._timeout.total, sock_read=EVENTS_READ_TIMEOUT_S)
         headers = {**self._headers(path), "Accept": "text/event-stream"}
         try:
-            async with self._session.get(self.url(path), headers=headers, timeout=timeout) as resp:
+            async with self._session.get(self.url(path), headers=headers, params=params, timeout=timeout) as resp:
                 if resp.status >= 400:
                     raise await _error_for(resp, False)
                 data: list[str] = []
+                name: str | None = None
                 async for raw in resp.content:
                     line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
                     if not line:
                         if data:
                             payload, data = "\n".join(data), []
-                            yield payload
+                            yield name, payload
+                        name = None
                     elif line.startswith(":"):
                         continue
                     elif line.startswith("data:"):
                         value = line[5:]
                         data.append(value[1:] if value.startswith(" ") else value)
+                    elif line.startswith("event:"):
+                        value = line[6:]
+                        name = (value[1:] if value.startswith(" ") else value) or None
         except (aiohttp.ClientError, TimeoutError) as err:
             raise TellyboxConnectionError(f"Event stream broke: {type(err).__name__}") from None
         raise TellyboxConnectionError("Event stream ended")
@@ -209,7 +245,7 @@ class TellyboxClient:
         Same behaviour as `events()`: keepalives are skipped and the iterator ends by raising
         TellyboxConnectionError.
         """
-        async for payload in self._stream("/api/kid/events"):
+        async for _, payload in self._stream("/api/kid/events"):
             yield _parse_event(payload, KidState.from_dict)
 
     async def image(self, path: str) -> Image:

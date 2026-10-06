@@ -7,8 +7,10 @@ where it matters, so callers can reach fields this version doesn't model yet.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
+from types import MappingProxyType
 from typing import Any
 
 LAST_FIVE_S = 300
@@ -489,3 +491,61 @@ class UsageHistory:
     def from_dict(cls, d: dict[str, Any]) -> UsageHistory:
         return cls(date.fromisoformat(d["today"]), int(d["days"]),
                    tuple(ProfileUsage.from_dict(p) for p in d.get("profiles", ())))
+
+
+@dataclass(frozen=True)
+class ServerEvent:
+    """One typed event from `GET /api/admin/events?typed=1` (docs/admin-api.md, "Typed events").
+
+    `type` is the event name (`playback_stopped`, `time_up`, ...; unknown types are kept as they are).
+    `at` is timezone-aware (UTC when the server sent none, or no `at`: then the time of parsing).
+    `profile_ids` is empty when the event has none. `data` holds every other field of the payload,
+    read-only. Events are advisory edges: the state stays the source of truth.
+    """
+
+    type: str
+    at: datetime
+    profile_ids: tuple[int, ...] = ()
+    data: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> ServerEvent:
+        """Never raises for an unknown type, extra fields or missing `at` / `profile_ids`."""
+        at: datetime | None = None
+        try:
+            at = _dt(d.get("at"))
+        except (ValueError, TypeError):
+            at = None
+        if at is None:
+            at = datetime.now(UTC)
+        elif at.tzinfo is None:
+            at = at.replace(tzinfo=UTC)
+        ids: list[int] = []
+        raw_ids = d.get("profile_ids")
+        if isinstance(raw_ids, (list, tuple)):
+            for item in raw_ids:
+                try:
+                    ids.append(int(item))
+                except (ValueError, TypeError):
+                    continue
+        rest = {k: v for k, v in d.items() if k not in ("type", "at", "profile_ids")}
+        return cls(str(d.get("type") or ""), at, tuple(ids), MappingProxyType(rest))
+
+    def _text(self, key: str) -> str | None:
+        value = self.data.get(key)
+        return value if isinstance(value, str) else None
+
+    @property
+    def reason(self) -> str | None:
+        """Why playback stopped (`playback_stopped`) or time ran out (`time_up`)."""
+        return self._text("reason")
+
+    @property
+    def source(self) -> str | None:
+        """Who applied an override (`override_applied`): the token's name, None for the admin pages."""
+        return self._text("source")
+
+    @property
+    def kind(self) -> str | None:
+        """What an override did (`override_applied`): `extra_minutes`, `unlimited`, `block`, `stop_now`, `clear`."""
+        return self._text("kind")
