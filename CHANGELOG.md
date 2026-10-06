@@ -4,6 +4,8 @@ Release notes for pytellybox. The workflow in `.github/workflows/publish.yml` pu
 
 ## Unreleased
 
+## 0.5.0
+
 - New `TellyboxClient.history()` with the `UsageHistory` models for Tellybox's daily history (HA-12), and `Info.supports()`. An older Tellybox answers 404 (`TellyboxNotFoundError`).
 
 ## 0.4.0
