@@ -238,3 +238,46 @@ async def test_unlimited_allowance_profile(client, mock):
 async def test_kid_profiles_carry_ui_fields(client):
     profiles = await client.kid_profiles()
     assert profiles[0].ui_mode == "icons" and profiles[0].watch_in_app is False
+
+
+async def test_state_and_events_carry_the_profile_fields(client):
+    state = await client.state()
+    assert (state.profile(1).picture, state.profile(1).watch_in_app, state.profile(1).ui_mode) == (
+        "/img/profile/1.jpg", False, "icons")
+    stream = client.events()
+    first = await next_event(stream)
+    await stream.aclose()
+    assert first.profile(2).ui_mode == "text" and first.profile(2).watch_in_app is True and first.profile(2).picture is None
+
+
+async def test_image_jpeg_for_a_profile_with_a_picture(client, mock):
+    image = await client.image((await client.state()).profile(1).picture)
+    assert image.content_type == "image/jpeg" and image.content.startswith(b"\xff\xd8") and image.content.endswith(b"\xff\xd9")
+    assert "Authorization" not in mock.calls[-1] and mock.calls[-1]["path"] == "/img/profile/1.jpg"
+
+
+async def test_image_profile_without_picture_or_unknown_is_not_found(client):
+    for path in ("/img/profile/2.jpg", "/img/profile/99.jpg", "/img/profile/x.jpg"):
+        with pytest.raises(TellyboxNotFoundError):
+            await client.image(path)
+
+
+async def test_image_avatar_svg_for_any_key(client):
+    image = await client.image("/static/avatars/whatever.svg")
+    assert image.content_type == "image/svg+xml" and image.content.startswith(b"<svg")
+
+
+async def test_image_other_kinds_still_served(client):
+    assert (await client.image("/img/episode/4.jpg")).content_type == "image/gif"
+
+
+async def test_mock_serves_the_old_shape_and_kid_profiles_follow_the_state(mock, client):
+    state = mock.state
+    for p in state["profiles"]:
+        for key in ("picture", "watch_in_app", "ui_mode"):
+            del p[key]
+    mock.push()
+    p = (await client.state()).profile(1)
+    assert (p.picture, p.watch_in_app, p.ui_mode) == (None, None, None)
+    kid = (await client.kid_profiles())[0]
+    assert kid.picture is None and kid.watch_in_app is False and kid.ui_mode == "icons"

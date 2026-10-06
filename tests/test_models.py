@@ -112,3 +112,24 @@ def test_kid_state():
 def test_kid_state_nothing_playing():
     s = KidState.from_dict({"tv": "unreachable"})
     assert s.now_playing is None and s.watching == () and s.profiles == {} and s.sessions == () and s.day is None
+
+
+def test_profile_picture_watch_in_app_and_ui_mode():
+    s = AdminState.from_dict(load("admin_state.json"))
+    assert (s.profile(1).picture, s.profile(1).watch_in_app, s.profile(1).ui_mode) == ("/img/profile/1.jpg", False, "icons")
+    assert (s.profile(2).picture, s.profile(2).watch_in_app, s.profile(2).ui_mode) == (None, True, "text")
+
+
+def test_older_server_without_picture_fields():
+    d = load("admin_state.json")
+    for p in d["profiles"]:
+        for key in ("picture", "watch_in_app", "ui_mode"):
+            del p[key]
+    for p in AdminState.from_dict(d).profiles:
+        assert p.picture is None and p.watch_in_app is None and p.ui_mode is None
+
+
+def test_watch_in_app_is_coerced_to_bool_only_when_present():
+    d = load("admin_state.json")
+    d["profiles"][0]["watch_in_app"] = 1
+    assert AdminState.from_dict(d).profile(1).watch_in_app is True

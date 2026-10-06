@@ -5,7 +5,9 @@
   same auth rules as Tellybox (401 / 403, a read-only token via `read_tokens`);
 - `/api/kid/profiles`, `/home`, `/shows/{id}`, `/state`, `/events` (SSE), `/play` (409 when a watcher can't start), `/pause`,
   `/resume`;
-- `/img/...` placeholder images.
+- `/img/...` placeholder images (`/img/profile/{id}.jpg` only for a profile with a `picture`, else 404) and
+  `/static/avatars/{key}.svg`.
+- per profile `picture`, `watch_in_app` and `ui_mode` (an 'old server' state simply omits them).
 Overrides change the scripted state the way Tellybox would (extra time, unlimited, block, clear, stop) and
 push a new event. Tests and scripts drive it through `MockTellybox`: `set_state(dict)`, `push()`,
 `calls` (recorded requests), and `app` (an aiohttp `web.Application`).
@@ -27,6 +29,17 @@ _LAST_FIVE_S = 300
 _PLACEHOLDER_IMAGE = (  # a 1x1 GIF; the mock has no image library
     b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x80\x80\x80\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,"
     b"\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+)
+
+_PLACEHOLDER_JPEG = bytes.fromhex(  # a valid 1x1 JPEG
+    "ffd8ffe000104a46494600010100000100010000ffdb004300100b0c0e0c0a100e0d0e1211101318281a181616183123251d"
+    "283a333d3c3933383740485c4e404457453738506d51575f626768673e4d71797064785c656763ffc0000b08000100010101"
+    "1100ffc40014000100000000000000000000000000000001ffc40014100100000000000000000000000000000000ffda0008"
+    "010100003f001fffd9"
+)
+_PLACEHOLDER_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
+    b'<circle cx="32" cy="32" r="30" fill="#ccc"/></svg>'
 )
 
 _EPISODES = {
@@ -83,6 +96,7 @@ class MockTellybox:
             web.post("/api/kid/pause", self._kid_pause),
             web.post("/api/kid/resume", self._kid_resume),
             web.get("/img/{kind}/{item}.jpg", self._image),
+            web.get("/static/avatars/{key}.svg", self._avatar),
         ])
 
     # ------------------------------------------------------------------ driving the mock
@@ -364,8 +378,9 @@ class MockTellybox:
 
     async def _kid_profiles(self, request: web.Request) -> web.Response:
         return web.json_response([
-            {"profile_id": p["id"], "name": p["name"], "picture": None, "avatar": p["avatar"],
-             "ui_mode": "icons", "watch_in_app": False, "time_up": p["can_start"] is False, "fraction_left": None, "last_five": p["last_five"],
+            {"profile_id": p["id"], "name": p["name"], "picture": p.get("picture"),
+             "avatar": p["avatar"], "ui_mode": p.get("ui_mode", "icons"),
+             "watch_in_app": p.get("watch_in_app", False), "time_up": p["can_start"] is False, "fraction_left": None, "last_five": p["last_five"],
              "unlimited": p["unlimited"]}
             for p in self._state["profiles"]])
 
@@ -438,7 +453,18 @@ class MockTellybox:
         return await self._set_playback("playing")
 
     async def _image(self, request: web.Request) -> web.Response:
+        if request.match_info["kind"] == "profile":
+            try:
+                profile_id = int(request.match_info["item"])
+            except ValueError:
+                return _json_error(404, "not_found")
+            if not any(p["id"] == profile_id and p.get("picture") for p in self._state["profiles"]):
+                return _json_error(404, "not_found")
+            return web.Response(body=_PLACEHOLDER_JPEG, content_type="image/jpeg")
         return web.Response(body=_PLACEHOLDER_IMAGE, content_type="image/gif")
+
+    async def _avatar(self, request: web.Request) -> web.Response:
+        return web.Response(body=_PLACEHOLDER_SVG, content_type="image/svg+xml")
 
 
 async def _serve(host: str, port: int, mock: MockTellybox) -> None:

@@ -18,11 +18,13 @@ from pytellybox.errors import (
     TellyboxTimeUpError,
     TellyboxUnavailableError,
 )
-from pytellybox.models import AdminState, Home, Info, KidProfile, KidState, Show
+from pytellybox.models import AdminState, Home, Image, Info, KidProfile, KidState, Show
 
 DEFAULT_TIMEOUT_S = 10.0
 EVENTS_READ_TIMEOUT_S = 45.0  # Tellybox sends a keepalive every 15 s
 EXTRA_MINUTES_MAX = 240
+IMAGE_MAX_BYTES = 2 * 1024 * 1024
+IMAGE_PATH_PREFIXES = ("/img/", "/static/avatars/")
 
 
 class TellyboxClient:
@@ -193,6 +195,28 @@ class TellyboxClient:
         """
         async for payload in self._stream("/api/kid/events"):
             yield _parse_event(payload, KidState.from_dict)
+
+    async def image(self, path: str) -> Image:
+        """Fetch a profile photo or avatar: `/img/...` or `/static/avatars/...`, no token needed.
+
+        Any other path raises ValueError before a request is made. The body is capped at 2 MiB: a larger one
+        raises TellyboxError without being read to the end. `content_type` is the response's, without parameters.
+        """
+        if not isinstance(path, str) or not path.startswith(IMAGE_PATH_PREFIXES) or ".." in path:
+            raise ValueError("path must start with /img/ or /static/avatars/")
+        try:
+            async with self._session.get(self.url(path), headers=self._headers(path), timeout=self._timeout) as resp:
+                if resp.status >= 400:
+                    raise await _error_for(resp, False)
+                content = bytearray()
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    content += chunk
+                    if len(content) > IMAGE_MAX_BYTES:
+                        raise TellyboxError("Image is too large")
+                content_type = resp.content_type
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise TellyboxConnectionError(f"Cannot reach Tellybox: {type(err).__name__}") from None
+        return Image(bytes(content), content_type)
 
     async def pause(self) -> None:
         """`POST /api/kid/pause`."""
