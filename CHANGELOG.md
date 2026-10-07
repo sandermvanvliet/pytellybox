@@ -4,6 +4,8 @@ Release notes for pytellybox. The workflow in `.github/workflows/publish.yml` pu
 
 ## Unreleased
 
+## 0.6.0
+
 - New `TellyboxClient.stream(typed=True)` and the `ServerEvent` model for Tellybox's typed events (HA-13): why playback stopped, who applied an override, time up, last five minutes, inbox and download events. `events()` is unchanged. Typed events are opt-in and need a Tellybox with the `typed_events` capability.
 
 ## 0.5.0
