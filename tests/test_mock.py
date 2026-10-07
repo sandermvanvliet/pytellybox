@@ -7,6 +7,7 @@ import aiohttp
 import pytest
 
 from pytellybox import (
+    AdminState,
     TellyboxAuthError,
     TellyboxClient,
     TellyboxForbiddenError,
@@ -15,7 +16,7 @@ from pytellybox import (
     TellyboxTimeUpError,
 )
 from pytellybox.mock import MockTellybox, default_state, main
-from tests.conftest import READ_TOKEN
+from tests.conftest import READ_TOKEN, TOKEN
 
 
 async def next_event(stream, timeout=2.0):
@@ -334,5 +335,88 @@ async def test_history_old_server_option(session):
         assert not (await c.info()).supports("history")
         with pytest.raises(TellyboxNotFoundError):
             await c.history()
+    finally:
+        await server.close()
+
+
+async def test_typed_stream_end_to_end(client, mock):
+    assert (await client.info()).supports("typed_events")
+    stream = client.stream(typed=True)
+    assert (await next_event(stream)).version == mock.state["version"]
+    mock.emit("override_applied", kind="extra_minutes", value=15, profile_ids=[1], source="Home Assistant")
+    mock.push()
+    mock.emit("playback_stopped", profile_ids=[1], reason="parent_stop")
+    first, second, third = [await next_event(stream) for _ in range(3)]
+    assert first.type == "override_applied" and first.kind == "extra_minutes" and first.source == "Home Assistant"
+    assert first.profile_ids == (1,) and first.at.tzinfo is not None and first.data["value"] == 15
+    assert isinstance(second, AdminState)
+    assert third.type == "playback_stopped" and third.reason == "parent_stop"
+    await stream.aclose()
+
+
+async def test_untyped_subscribers_get_no_named_frames(client, mock):
+    plain = client.stream()
+    legacy = client.events()
+    await next_event(plain)
+    await next_event(legacy)
+    mock.emit("time_up", profile_ids=[1], reason="allowance")
+    mock.push()
+    assert isinstance(await next_event(plain), AdminState)
+    assert isinstance(await next_event(legacy), AdminState)
+    await plain.aclose()
+    await legacy.aclose()
+
+
+async def test_events_ignores_typed_frames_from_the_mock(mock, session):
+    # A typed subscriber on the wire next to events(): events() itself never asks for typed frames, so feed it
+    # the typed stream's bytes by pointing a raw request at the route.
+    async with session.get(f"{mock.base_url}/api/admin/events", params={"typed": "1"},
+                           headers={"Authorization": f"Bearer {TOKEN}"}) as resp:
+        await resp.content.readline()
+        mock.emit("time_up", profile_ids=[1], reason="allowance")
+        assert (await asyncio.wait_for(_read_until(resp, b"event: time_up"), 2)) is True
+    c = TellyboxClient(mock.base_url, TOKEN, session)
+    stream = c.events()
+    await next_event(stream)
+    mock.emit("time_up", profile_ids=[1], reason="allowance")
+    mock.push()
+    assert isinstance(await next_event(stream), AdminState)
+    await stream.aclose()
+
+
+async def _read_until(resp, prefix: bytes) -> bool:
+    async for line in resp.content:
+        if line.startswith(prefix):
+            return True
+    return False
+
+
+async def test_typed_subscriber_is_removed_on_disconnect(client, mock):
+    stream = client.stream(typed=True)
+    await next_event(stream)
+    assert mock._typed_subscribers
+    await stream.aclose()
+    for _ in range(50):
+        if not mock._typed_subscribers:
+            break
+        await asyncio.sleep(0.02)
+    assert not mock._typed_subscribers and not mock._subscribers
+
+
+async def test_typed_events_old_server_option(session):
+    from aiohttp.test_utils import TestServer
+
+    old = MockTellybox(token="tbx_mock", typed_events=False)
+    server = TestServer(old.app)
+    await server.start_server()
+    try:
+        c = TellyboxClient(str(server.make_url("")).rstrip("/"), "tbx_mock", session)
+        assert not (await c.info()).supports("typed_events")
+        stream = c.stream(typed=True)
+        assert isinstance(await next_event(stream), AdminState)
+        old.emit("time_up", profile_ids=[1])
+        old.push()
+        assert isinstance(await next_event(stream), AdminState)  # the named frame never arrived
+        await stream.aclose()
     finally:
         await server.close()

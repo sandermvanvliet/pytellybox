@@ -179,3 +179,57 @@ def test_info_supports():
     i = Info.from_dict({"instance_id": "abc", "version": "dev", "api": 1, "capabilities": ["state", "history"]})
     assert i.supports("history") and not i.supports("nope")
     assert not Info.from_dict({"instance_id": "a", "version": "d", "api": 1}).supports("history")
+
+
+# --------------------------------------------------------------------------- ServerEvent (typed events)
+
+
+def test_server_event_known_types():
+    from pytellybox import ServerEvent
+
+    stopped = ServerEvent.from_dict({
+        "type": "playback_stopped", "at": "2026-10-06T18:02:11.000+00:00", "profile_ids": [1, 2],
+        "reason": "time_up", "position_s": 12, "title": "Pup",
+    })
+    assert stopped.type == "playback_stopped" and stopped.at == datetime(2026, 10, 6, 18, 2, 11, tzinfo=UTC)
+    assert stopped.profile_ids == (1, 2) and stopped.reason == "time_up"
+    assert stopped.source is None and stopped.kind is None
+    assert stopped.data["position_s"] == 12 and "type" not in stopped.data and "profile_ids" not in stopped.data
+    override = ServerEvent.from_dict({
+        "type": "override_applied", "at": "2026-10-06T18:02:11Z", "kind": "extra_minutes", "value": 15,
+        "profile_ids": [1], "source": "Home Assistant",
+    })
+    assert override.kind == "extra_minutes" and override.source == "Home Assistant" and override.reason is None
+    assert override.data["value"] == 15
+
+
+def test_server_event_is_read_only():
+    import dataclasses
+
+    import pytest
+
+    from pytellybox import ServerEvent
+
+    event = ServerEvent.from_dict({"type": "time_up", "at": "2026-10-06T18:02:11Z", "reason": "allowance"})
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        event.type = "x"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        event.data["reason"] = "x"  # type: ignore[index]
+
+
+def test_server_event_unknown_type_and_extra_fields():
+    from pytellybox import ServerEvent
+
+    event = ServerEvent.from_dict({"type": "from_the_future", "at": "2026-10-06T18:02:11+02:00", "x": {"y": 1}})
+    assert event.type == "from_the_future" and event.profile_ids == () and event.data == {"x": {"y": 1}}
+    assert event.at.utcoffset() is not None
+
+
+def test_server_event_missing_or_odd_fields():
+    from pytellybox import ServerEvent
+
+    event = ServerEvent.from_dict({"type": "last_five", "reason": 5, "profile_ids": "nope"})
+    assert event.at.tzinfo is not None and event.profile_ids == () and event.reason is None
+    assert ServerEvent.from_dict({"type": "t", "at": "garbage"}).at.tzinfo is not None
+    assert ServerEvent.from_dict({"type": "t", "at": "2026-10-06T18:02:11"}).at.tzinfo is not None
+    assert ServerEvent.from_dict({}).type == ""

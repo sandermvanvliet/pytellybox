@@ -8,6 +8,9 @@
 - `/img/...` placeholder images (`/img/profile/{id}.jpg` only for a profile with a `picture`, else 404) and
   `/static/avatars/{key}.svg`.
 - `/api/admin/history` (`history` capability; `MockTellybox(history=False)` plays an older server: 404, no capability);
+- `?typed=1` on the admin events (`typed_events` capability): `emit(type, **fields)` pushes a named
+  `event:` frame to typed subscribers only; `MockTellybox(typed_events=False)` plays an older server (no
+  capability, `typed=1` ignored, no named frames);
 - per profile `picture`, `watch_in_app` and `ui_mode` (an 'old server' state simply omits them).
 Overrides change the scripted state the way Tellybox would (extra time, unlimited, block, clear, stop) and
 push a new event. Tests and scripts drive it through `MockTellybox`: `set_state(dict)`, `push()`,
@@ -20,7 +23,7 @@ import argparse
 import asyncio
 import copy
 import json
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from collections.abc import Awaitable, Callable, Iterable
 from importlib import resources
 from typing import Any
@@ -81,7 +84,7 @@ class MockTellybox:
 
     def __init__(
         self, state: dict[str, Any] | None = None, *, token: str = "tbx_mock", read_tokens: Iterable[str] = (),
-        keepalive_s: float = 15.0, history: bool = True,
+        keepalive_s: float = 15.0, history: bool = True, typed_events: bool = True,
     ) -> None:
         self.tokens: set[str] = {token}
         self.read_tokens: set[str] = set(read_tokens)
@@ -89,9 +92,11 @@ class MockTellybox:
         self.history_enabled = history  # False behaves like an older Tellybox: no capability, 404
         self.history_days: dict[int, dict[str, dict[str, Any]]] = copy.deepcopy(_HISTORY_DAYS)  # profile -> date -> row
         self.history_last_watched: dict[int, dict[str, Any] | None] = copy.deepcopy(_HISTORY_LAST_WATCHED)
+        self.typed_events_enabled = typed_events  # False: no capability, `typed=1` ignored, no named frames
         self.calls: list[dict[str, Any]] = []
         self._state: dict[str, Any] = copy.deepcopy(state) if state is not None else default_state()
         self._subscribers: set[asyncio.Queue[str | None]] = set()
+        self._typed_subscribers: set[asyncio.Queue[str | None]] = set()  # the subset that asked for ?typed=1
         self._kid_subscribers: set[asyncio.Queue[str | None]] = set()
         self._runner: web.AppRunner | None = None
         self.app = web.Application(middlewares=[self._record, self._auth])
@@ -134,10 +139,17 @@ class MockTellybox:
         """Send the current state to every open event stream."""
         payload = json.dumps(self._state)
         for queue in self._subscribers:
-            queue.put_nowait(payload)
+            queue.put_nowait(f"data: {payload}\n\n")
         kid_payload = json.dumps(self._kid_state_dict())
         for queue in self._kid_subscribers:
-            queue.put_nowait(kid_payload)
+            queue.put_nowait(f"data: {kid_payload}\n\n")
+
+    def emit(self, type: str, **fields: Any) -> None:
+        """Push a typed event (`event: <type>`, envelope with `type`, `at` and `fields`) to typed subscribers only."""
+        envelope = {"type": type, "at": datetime.now(UTC).isoformat(timespec="milliseconds"), **fields}
+        frame = f"event: {type}\ndata: {json.dumps(envelope)}\n\n"
+        for queue in self._typed_subscribers:
+            queue.put_nowait(frame)
 
     async def start(self, host: str = "127.0.0.1", port: int = 0) -> str:
         """Listen on host:port (0 = any free port) and return the base URL."""
@@ -185,7 +197,11 @@ class MockTellybox:
 
     def _capabilities(self) -> list[str]:
         caps = ["state", "events", "overrides", "profiles", "inbox"]
-        return [*caps, "history"] if self.history_enabled else caps
+        if self.history_enabled:
+            caps.append("history")
+        if self.typed_events_enabled:
+            caps.append("typed_events")
+        return caps
 
     async def _history(self, request: web.Request) -> web.Response:
         if not self.history_enabled:
@@ -228,18 +244,23 @@ class MockTellybox:
         return web.json_response(self._state)
 
     async def _events(self, request: web.Request) -> web.StreamResponse:
-        return await self._stream(request, self._subscribers, lambda: self._state)
+        typed = self.typed_events_enabled and request.query.get("typed") == "1"
+        return await self._stream(request, self._subscribers, lambda: self._state,
+                                  self._typed_subscribers if typed else None)
 
     async def _kid_events(self, request: web.Request) -> web.StreamResponse:
         return await self._stream(request, self._kid_subscribers, self._kid_state_dict)
 
     async def _stream(self, request: web.Request, subscribers: set[asyncio.Queue[str | None]],
-                      current: Callable[[], dict[str, Any]]) -> web.StreamResponse:
+                      current: Callable[[], dict[str, Any]],
+                      also: set[asyncio.Queue[str | None]] | None = None) -> web.StreamResponse:
         resp = web.StreamResponse(headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"})
         await resp.prepare(request)
         queue: asyncio.Queue[str | None] = asyncio.Queue()
-        queue.put_nowait(json.dumps(current()))
+        queue.put_nowait(f"data: {json.dumps(current())}\n\n")
         subscribers.add(queue)
+        if also is not None:
+            also.add(queue)
         try:
             while True:
                 try:
@@ -249,11 +270,13 @@ class MockTellybox:
                     continue
                 if payload is None:
                     break
-                await resp.write(f"data: {payload}\n\n".encode())
+                await resp.write(payload.encode())
         except ConnectionResetError:
             pass
         finally:
             subscribers.discard(queue)
+            if also is not None:
+                also.discard(queue)
         return resp
 
     async def _close_streams(self, app: web.Application) -> None:
